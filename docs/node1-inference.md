@@ -34,8 +34,8 @@ This lab decouples four concerns onto dedicated machines on the `192.168.1.0/24`
 
 - **Assigned Role:** Centralized LLM inference & heavy execution engine.
 - **Hardware Utilization:** 2× Intel Xeon Gold 6148 (48C/96T), 96 GB RAM, **2× Tesla P40 (24 GB each, 48 GB total)** — Pascal, compute 6.1.
-- **Foundry Lab Role:** Run **Ollama / llama.cpp** across both P40 GPUs as the high-capacity backend for large open-weights models (Qwen 2.5 Coder 32B, Llama 3.1 70B, etc.) quantized via **INT8 / GGUF**, exposing an **OpenAI-compatible REST API**. Promptflow and Foundry services route inference here.
-- **Lab wiring:** Exposes the OpenAI-compatible endpoint that Nodes 2–4 call for all heavy generation. See `../llm-rig/` for the CUDA + Ollama installation backing this role.
+- **Node 1 Role:** Run **Ollama / llama.cpp** across both P40 GPUs as the high-capacity backend for large open-weights models (Qwen 2.5 Coder 32B, Llama 3.1 70B, etc.) quantized via **INT8 / GGUF**, exposing an **OpenAI-compatible REST API**. Promptflow and inference-rig services route inference here.
+- **Lab wiring:** Exposes the OpenAI-compatible endpoint that Nodes 2–4 call for all heavy generation.
 - **_(PENDING)_** — chassis serial, room/rack location.
 
 #### Host Hypervisor & Firmware
@@ -87,7 +87,7 @@ Concrete per-VM OS + install recipe. This is the checklist for building the VMs:
 | `pf-mgmt` | Ubuntu Server 26.04 LTS | Python 3.12, `promptflow`, n8n (Docker), Docker Engine + Compose | Promptflow service + n8n orchestration; point its AI connection at `pf-host` |
 | `grafana` | Ubuntu Server 26.04 LTS (or Grafana's container image) | Docker Compose: `grafana`, `node_exporter` | Scrapes `pf-host` (nvidia ddm, Ollama/pf metrics) and Node 4 |
 
-> 📝 **The only VM that touches the GPUs is `pf-host`.** It serves inference with **`llama.cpp` tensor-split across both P40s** (primary, on `:8080`); **Ollama `:11434` is the optional single-card/Foundry backend** and does **NOT** span both cards. `pf-mgmt` and `grafana` have no GPU passthrough and never see the P40s.
+> 📝 **The only VM that touches the GPUs is `pf-host`.** It serves inference with **`llama.cpp` tensor-split across both P40s** (primary, on `:8080`); **Ollama `:11434` is the optional single-card/inference-rig backend** and does **NOT** span both cards. `pf-mgmt` and `grafana` have no GPU passthrough and never see the P40s.
 
 #### Networking
 
@@ -103,21 +103,21 @@ Concrete per-VM OS + install recipe. This is the checklist for building the VMs:
 
 - **Assigned Role:** Primary development workstation & light evaluation node.
 - **Hardware Utilization:** AMD Ryzen 9 5900X, 96 GB RAM, **NVIDIA GeForce RTX 3080 (10 GB VRAM)** — Ampere (compute 8.6), FP16/Tensor-core capable.
-- **Foundry Lab Role:** The day-to-day coding environment. Run **VS Code with the Foundry Toolkit**, connected via Remote-SSH to the R740xd server (Node 1) or locally. Use the RTX 3080 for quick local debugging, embedding generation, or smaller ultra-fast models (Phi-4, Qwen 2.5 7B) during prompt-engineering iterations. The 3080 is the only FP16-capable GPU in the lab — reserve it for tasks that genuinely benefit from Ampere acceleration.
+- **Node 2 Role:** The day-to-day coding environment. Run **VS Code with the inference-rig Toolkit**, connected via Remote-SSH to the R740xd server (Node 1) or locally. Use the RTX 3080 for quick local debugging, embedding generation, or smaller ultra-fast models (Phi-4, Qwen 2.5 7B) during prompt-engineering iterations. The 3080 is the only FP16-capable GPU in the lab — reserve it for tasks that genuinely benefit from Ampere acceleration.
 - **_(PENDING)_** — OS, peripherals, PSU wattage, serial number, daily-driver role.
 
 ### 🗄️ Node 3: Data Lake & Vector Storage Backbone (Lenovo ThinkCentre TS430)
 
 - **Assigned Role:** Persistent storage, RAG corpus, & evaluation datasets.
 - **Hardware Utilization:** Xeon E3-1280 v2, 31 GB RAM, **ZFS RAIDZ1 Pool (~1 TB)** (3× 931 GB drives).
-- **Foundry Lab Role:** Hosts the local document repositories, training/evaluation datasets for Promptflow evaluation pipelines, and a persistent vector database container (**Qdrant**, exposed on **port 6333**) backing RAG workflows. Serves RAG documents over **NFS** to Node 1.
+- **Node 3 Role:** Hosts the local document repositories, training/evaluation datasets for Promptflow evaluation pipelines, and a persistent vector database container (**Qdrant**, exposed on **port 6333**) backing RAG workflows. Serves RAG documents over **NFS** to Node 1.
 - **_(PENDING)_** — AIO vs Bay model, OS, serial, pool usage, NFS share definitions.
 
 ### ⚙️ Node 4: Orchestration & Automation Control Plane (Lenovo M70q)
 
 - **Assigned Role:** Microservices, tooling, & workflow automation.
 - **Hardware Utilization:** Lenovo M70q (32 GB RAM, 1 TB SSD).
-- **Foundry Lab Role:** Runs a lightweight container orchestration layer (**Docker Compose**) hosting infrastructure tooling:
+- **Node 4 Role:** Runs a lightweight container orchestration layer (**Docker Compose**) hosting infrastructure tooling:
   - **n8n** — automated multi-agent pipelines and webhook triggers (R&D workflows).
   - **AnythingLLM / Open WebUI** — chat interfaces and user-facing testing.
   - **Prometheus + Grafana** — monitoring server temperatures, VRAM usage on the Tesla P40s, and API response latencies (via node_exporter + NVIDIA ddm).
@@ -164,7 +164,7 @@ CUDA_VISIBLE_DEVICES=0 ollama serve &
 ollama run qwen2.5:32b-q4_K_M
 ```
 
-Expose it OpenAI-compatible (already does so on `:11434`) — Pointflow/Foundry point at `http://192.168.1.10:11434/v1`.
+Expose it OpenAI-compatible (already does so on `:11434`) — Pointflow/inference-rig point at `http://192.168.1.10:11434/v1`.
 
 ### 2.4 Promptflow `pf flow serve`
 
