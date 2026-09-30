@@ -1,7 +1,7 @@
-# Local Microsoft AI Foundry / Promptflow R&D Lab — Architecture Design
+# Local LLM Inference Rig / Promptflow R&D Lab — Architecture Design
 
-> Target hardware: the infra-lab homelab (see [`../HOMELAB-INVENTORY.md`](../HOMELAB-INVENTORY.md)).
-> Purpose: Blueprint for a robust, local Foundry self-learning lab with a decoupled, node-based architecture.
+> Target hardware: the infra-lab homelab (see [`./HOMELAB-INVENTORY.md`](./HOMELAB-INVENTORY.md)).
+> Purpose: Blueprint for a robust, local LLM inference lab with a decoupled, node-based architecture.
 > Status: **v1 — operational blueprint.** Subsections marked `_(PENDING)_` map directly to open inventory fields; resolve them in the corresponding rollout phase.
 
 ---
@@ -11,7 +11,7 @@
 This lab decouples four concerns onto dedicated machines on the `192.168.1.0/24` subnet:
 
 1. **Heavy inference** → Dell PowerEdge R740xd with 2× Tesla P40 (Pascal, compute 6.1, INT8/DP4A-optimized).
-2. **Development** → `DESKTOP-STEEVE` workstations running VS Code + Foundry Toolkit.
+2. **Development** → `DESKTOP-STEEVE` workstations running VS Code + inference-toolkit.
 3. **Persistent data & vector storage** → Lenovo ThinkCentre TS430 (ZFS, NFS, Qdrant).
 4. **Automation & control plane** → Lenovo M70q (n8n, monitoring, orchestration).
 
@@ -28,7 +28,7 @@ This lab decouples four concerns onto dedicated machines on the `192.168.1.0/24`
 | 3 — Data & Storage Backbone | Lenovo ThinkCentre TS430 | Xeon E3-1280 v2, 31 GB RAM, ZFS RAIDZ1 (~1 TB) | Persistent storage, RAG corpus, eval datasets | `192.168.1.20` |
 | 4 — Orchestration & Automation | Lenovo M70q (NUC as spare) | M70q 32 GB RAM, 1 TB SSD | Microservices, tooling, workflow automation | `192.168.1.30` |
 
-> **Note on Node 4.** The inventory also lists a NUC Box (NUC8i5BEK1, 16 GB RAM, 240 GB NVMe) as a separate machine. Reserve it as a spare, VM host, or secondary automation host once the M70q role is settled. See [`../HOMELAB-INVENTORY.md#/pending-questions`](../HOMELAB-INVENTORY.md) for the unresolved CPU/GPU/OS fields.
+> **Note on Node 4.** The inventory also lists a NUC Box (NUC8i5BEK1, 16 GB RAM, 240 GB NVMe) as a separate machine. Reserve it as a spare, VM host, or secondary automation host once the M70q role is settled. See [`./HOMELAB-INVENTORY.md#/pending-questions`](./HOMELAB-INVENTORY.md) for the unresolved CPU/GPU/OS fields.
 
 ### 🚀 Node 1: The Inference Powerhouse (Dell PowerEdge R740xd)
 
@@ -59,13 +59,13 @@ VMs are deployed one-per-purpose on the NVMe hot store. Total host RAM is ~96 GB
 
 | VM | vCPU | RAM | GPU Passthrough | Storage (recommended) | Suggested OS | Software to install | Role |
 |----|------|-----|-----------------|-----------------------|--------------|---------------------|------|
-| `pf-host` | 8 | 48 GB | **2× P40** (x16 + x8 slots — both cards) | **256 GB** provisioned on NVMe hot store — includes `llama.cpp` workspace + shared model weights cache | **Ubuntu Server 26.04 LTS** — required for CUDA 13 + NVIDIA P40 driver | **`llama.cpp`** (build + CUDA), NVIDIA P40 driver, CUDA 13; shared model weights (GGUF) + NFS client | Inference host — build via **`llama.cpp-install.sh`**, model weights via **`model-weights.sh`**, CUDA/driver via **`install-cuda.sh`**. | Inference host — serves models with **`llama.cpp` tensor-split across both P40s** (primary, Q8_0/Q4_K_M on `:8080`); Ollama `:11434` optional single-card Foundry backend. This VM owns the entire GPU pool. |
+| `pf-host` | 8 | 48 GB | **2× P40** (x16 + x8 slots — both cards) | **256 GB** provisioned on NVMe hot store — includes `llama.cpp` workspace + shared model weights cache | **Ubuntu Server 26.04 LTS** — required for CUDA 13 + NVIDIA P40 driver | **`llama.cpp`** (build + CUDA), NVIDIA P40 driver, CUDA 13; shared model weights (GGUF) + NFS client | Inference host — build via **`llama.cpp-install.sh`**, model weights via **`model-weights.sh`**, CUDA/driver via **`install-cuda.sh`**. | Inference host — serves models with **`llama.cpp` tensor-split across both P40s** (primary, Q8_0/Q4_K_M on `:8080`); Ollama `:11434` optional single-card inference-rig backend. This VM owns the entire GPU pool. |
 | `pf-mgmt` | 4 | 16 GB | none | **96 GB** provisioned on NVMe hot store — Promptflow, n8n, workloads | **Ubuntu Server 26.04 LTS** — Python/Promptflow/n8n host | Python 3.12, `promptflow`, n8n (via Docker) | Promptflow, n8n, general dev & orchestration. Routes AI inference to `pf-host`'s endpoint. |
 | `grafana` | 2 | 8 GB | none | **24 GB** provisioned on NVMe hot store | **Ubuntu Server 26.04 LTS** (or Grafana's own container image) | Docker Compose (or Grafana image): grafana, node_exporter | Dashboards on :3000 |
 
 > 📝 The 2 TB NVMe hot store is sized so that the 4 VMs above (~600 GB provisioned) leave **~1.4 TB free** for model weights, GGUF caches, NFS-backed datasets, and scratch. Keep at least **30 % free** on the NVMe (≈ 600 GB) for TRIM/over-provisioning and to avoid 4K-IOPS collapse as the pool fills.
 
-> 📝 **Serving runtime — read this before wiring the endpoints.** `pf-host` is the **inference host**. Its **primary GPU path is `llama.cpp`, tensor-split across both P40s** (`--tensor-split 0.5,0.5`, GGUF Q8_0/Q4_K_M, OpenAI-compatible on `:8080`) — that is what serves the large models. **Ollama `:11434` is the optional single-card backend**, kept for Foundry/Promptflow's `open_ai` connection and quick single-card serving — it does **NOT** split a model across both P40s. So: `llama.cpp` = heavy multi-card inference on `pf-host`; Ollama = optional single-card/Foundry backend. Both expose OpenAI-compatible APIs. (Details in §2.2–2.3, and per-VM in the OS & Software Matrix below.)
+> 📝 **Serving runtime — read this before wiring the endpoints.** `pf-host` is the **inference host**. Its **primary GPU path is `llama.cpp`, tensor-split across both P40s** (`--tensor-split 0.5,0.5`, GGUF Q8_0/Q4_K_M, OpenAI-compatible on `:8080`) — that is what serves the large models. **Ollama `:11434` is the optional single-card backend**, kept for inference-rig/Promptflow's `open_ai` connection and quick single-card serving — it does **NOT** split a model across both P40s. So: `llama.cpp` = heavy multi-card inference on `pf-host`; Ollama = optional single-card/inference-rig backend. Both expose OpenAI-compatible APIs. (Details in §2.2–2.3, and per-VM in the OS & Software Matrix below.)
 
 > ⚠️ **One open gate — PCIe passthrough must be confirmed.** Before committing to the VM-per-purpose plan, verify that the Tesla P40s pass through the R740xd's PCIe slots under ESXi 8 (`/dev/vfio`, IOMMA grouping, ACS flags). If passthrough is not viable, the inference VM either runs without GPU or the inference workload runs on the ESXi host OS directly.
 >
@@ -83,7 +83,7 @@ Concrete per-VM OS + install recipe. This is the checklist for building the VMs:
 
 | VM | OS | Software to install | Install note |
 |----|----|---------------------|--------------|
-| `pf-host` | Ubuntu Server 26.04 LTS | **`llama.cpp`** (built with CUDA 13), NVIDIA P40 driver, CUDA 13; shared GGUF weights on the NVMe/NFS cache; weights via **`model-weights.sh`** | Serve via `llama-server --tensor-split 0.5,0.5 --port 8080` (primary). Ollama `:11434` optional for Foundry single-card. Build/install order in §3. See §2.2/§2.3/§2.4 |
+| `pf-host` | Ubuntu Server 26.04 LTS | **`llama.cpp`** (built with CUDA 13), NVIDIA P40 driver, CUDA 13; shared GGUF weights on the NVMe/NFS cache; weights via **`model-weights.sh`** | Serve via `llama-server --tensor-split 0.5,0.5 --port 8080` (primary). Ollama `:11434` optional for inference-rig single-card. Build/install order in §3. See §2.2/§2.3/§2.4 |
 | `pf-mgmt` | Ubuntu Server 26.04 LTS | Python 3.12, `promptflow`, n8n (Docker), Docker Engine + Compose | Promptflow service + n8n orchestration; point its AI connection at `pf-host` |
 | `grafana` | Ubuntu Server 26.04 LTS (or Grafana's container image) | Docker Compose: `grafana`, `node_exporter` | Scrapes `pf-host` (nvidia ddm, Ollama/pf metrics) and Node 4 |
 
@@ -143,7 +143,7 @@ For models too large for a single 24 GB P40, split layers across both cards with
 
 ```bash
 llama-server \
-  --model /mnt/foundry/models/qwen2.5-coder-32b-Q4_K_M.gguf \
+  --model /mnt/inference-rig/models/qwen2.5-coder-32b-Q4_K_M.gguf \
   --n-gpu-layers 90 \
   --tensor-split 0.5,0.5 \
   --host 192.168.1.10 --port 8080 \
@@ -191,7 +191,7 @@ Route its `azure_open_ai` / `open_ai` connection to the Ollama endpoint (`http:/
 | M70q (Node 4) | `192.168.1.30` | n8n `:5678`, Grafana `:3000`, Prometheus `:9090` |
 | DESKTOP-STEEVE (Node 2) | `192.168.1.50` (or DHCP) | Dev workstations |
 
-> **_(PENDING)_** Confirm these IPs are outside your DHCP pool on the router. Add entries to `/etc/hosts` on every node (or a local Pi-hole/Unbound DNS) so `node1.foundry.lan`, `storage.foundry.lan`, etc. resolve on the subnet.
+> **_(PENDING)_** Confirm these IPs are outside your DHCP pool on the router. Add entries to `/etc/hosts` on every node (or a local Pi-hole/Unbound DNS) so `node1.inference-rig.lan`, `storage.inference-rig.lan`, etc. resolve on the subnet.
 
 ### 3.2 NFS Shares (RAG Document Ingestion)
 
@@ -199,16 +199,16 @@ On **Node 3 (TS430)**, export the ZFS pool paths used by Promptflow RAG:
 
 ```bash
 # /etc/exports on TS430
-/tank/foundry/documents  192.168.1.0/24(ro,no_subtree_check,all_squash)
-/tank/foundry/vector_data 192.168.1.0/24(rw,no_subtree_check)
+/tank/inference-rig/documents  192.168.1.0/24(ro,no_subtree_check,all_squash)
+/tank/inference-rig/vector_data 192.168.1.0/24(rw,no_subtree_check)
 ```
 
 Mount on **Node 1 (R740xd)**:
 
 ```bash
-sudo mkdir -p /mnt/foundry/documents /mnt/foundry/vector_data
-sudo mount -t nfs 192.168.1.20:/tank/foundry/documents /mnt/foundry/documents
-sudo mount -t nfs 192.168.1.20:/tank/foundry/vector_data /mnt/foundry/vector_data
+sudo mkdir -p /mnt/inference-rig/documents /mnt/inference-rig/vector_data
+sudo mount -t nfs 192.168.1.20:/tank/inference-rig/documents /mnt/inference-rig/documents
+sudo mount -t nfs 192.168.1.20:/tank/inference-rig/vector_data /mnt/inference-rig/vector_data
 ```
 
 Add persistent mounts in `/etc/fstab` with `_netdev` and `nofail`. Add `/etc/exports` entries as part of Phase 3.
@@ -227,9 +227,9 @@ Qdrant runs on Node 3 (or as a Docker Compose service on Node 4, fronted by NFS 
 After Ubuntu 26.04 LTS is installed and the P40s are visible, bootstrap the inference stack on `pf-host` in this order:
 
 1. **Driver + CUDA:** run `install-cuda.sh` on `pf-host` — installs NVIDIA **620.32.03** driver + **CUDA 13.0.2**. The driver and CUDA versions must match (the package in `install-cuda.sh` pins them together); do **not** mix a different CUDA version with this driver. (matches §3.1 build)
-2. **llama.cpp build:** run `llama.cpp-install.sh`. It builds with `-DGGML_CUDA=ON -DGGML_NATIVE=ON -DCMAKE_CUDA_ARCHITECTURES="70" -DLLAMA_OPENSSL=ON` (P40 = sm_70, Pascal, compute 6.1). Do **not** build with `-DLLAMA_CURL=ON` — libcurl support was removed (commit #18828); use **OpenSSL** instead.
+2. **llama.cpp build:** run `llama.cpp-install.sh`. It builds with `-DGGML_CUDA=ON -DGGML_NATIVE=ON -DCMAKE_CUDA_ARCHITECTURES="61" -DLLAMA_OPENSSL=ON` (P40 = sm_61, Pascal, compute 6.1). Do **not** build with `-DLLAMA_CURL=ON` — libcurl support was removed (commit #18828); use **OpenSSL** instead.
 3. **Model weights:** run `model-weights.sh` to convert a HuggingFace checkpoint to GGUF and quantize it to Q4_K_M/Q8_0. This enforces the FP16 rule — **no unquantized FP16 or Tensor-Core serving paths**.
-4. **Serve:** run `llama-server --model <path> --tensor-split 0.5,0.5 --port 8080` (primary multi-card). Optionally run Ollama on `:11434` for single-card Foundry calls. See §2.1 for the FP16/runtime rules.
+4. **Serve:** run `llama-server --model <path> --tensor-split 0.5,0.5 --port 8080` (primary multi-card). Optionally run Ollama on `:11434` for single-card inference-rig calls. See §2.1 for the FP16/runtime rules.
 
 Both `llama.cpp-install.sh` and `model-weights.sh` must be run on `pf-host` (the VM where the P40s and driver live).
 
@@ -253,7 +253,7 @@ Description=llama.cpp inference server (tensor-split across both P40s)
 After=network-online.target
 
 [Service]
-ExecStart=/opt/llama.cpp/bin/llama-server --model /mnt/foundry/models/qwen2.5-coder-32b-Q4_K_M.gguf --tensor-split 0.5,0.5 --port 8080
+ExecStart=/opt/llama.cpp/bin/llama-server --model /mnt/inference-rig/models/qwen2.5-coder-32b-Q4_K_M.gguf --tensor-split 0.5,0.5 --port 8080
 Restart=always
 RestartSec=5
 Environment=CUDA_VISIBLE_DEVICES=
@@ -266,9 +266,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now llama-server.service
 ```
 
-`llama-server` splits the two P40s with `--tensor-split 0.5,0.5` and exposes an OpenAI-compatible API on `http://192.168.1.10:8080`. For single-GPU Foundry calls, run Ollama instead (`see §2.1`) and expose `:11434`.
+`llama-server` splits the two P40s with `--tensor-split 0.5,0.5` and exposes an OpenAI-compatible API on `http://192.168.1.10:8080`. For single-GPU inference-rig calls, run Ollama instead (`see §2.1`) and expose `:11434`.
 
-#### Ollama tension (single-GPU Foundry)
+#### Ollama tension (single-GPU inference-rig)
 
 `install-ollama.sh` installs a single Ollama model onto one P40 (24 GB). A 70B quantized GGUF does not fit on a single P40, so `llama-server` (splitting both GPUs) is the recommended serving path for large models. Use Ollama only for 7B-class GGUFs.
 
@@ -280,9 +280,9 @@ sudo systemctl enable --now llama-server.service
 |-------|-------------|---------|---------------|
 | **Phase 0** — Hypervisor | R740xd | Install VMware ESXi 8 (mirror boot via SATA M.2 + BOSS-2), configure iDRAC, provision VMs per §2.1 VM list (`pf-host`, `pf-mgmt`, `grafana`). On `pf-host` enable P40 passthrough (or fall back to host OS) and install CUDA 13.0 + driver. | ESXi 8 boots, `nvidia-smi` on `pf-host` shows both P40s (or on host OS if no passthrough) |
 | **Phase 1** — Inference VMs | R740xd | Stand up inference VMs: `pf-host` (llama.cpp tensor-split, both P40s); pull a Q4_K_M/Q8_0 model; verify serving. Use `install-cuda.sh` (driver + CUDA 13.0), then `llama.cpp-install.sh` (build), then `model-weights.sh` (weights). | `curl :11434/api/tags` returns model; `curl :8080` responds |
-| **Phase 2** — Storage | TS430 | NFS exports for `tank/foundry/*`, install & run Qdrant on :6333 | NFS mount works from Node 1; Qdrant health OK |
+| **Phase 2** — Storage | TS430 | NFS exports for `tank/inference-rig/*`, install & run Qdrant on :6333 | NFS mount works from Node 1; Qdrant health OK |
 | **Phase 3** — Orchestration | M70q | Docker Compose: n8n, Grafana, Prometheus, node_exporter | Dashboards scrape all nodes |
-| **Phase 4** — Development | DESKTOP-STEEVE | VS Code + Foundry Toolkit, Remote-SSH to Node 1 | First flow runs against Node 1 inference |
+| **Phase 4** — Development | DESKTOP-STEEVE | VS Code + inference-toolkit, Remote-SSH to Node 1 | First flow runs against Node 1 inference |
 | **Phase 5** — Integrate | All | Wire the `pf-mgmt` Promptflow server → the inference endpoint on pf-host; end-to-end RAG | First multi-agent flow completes |
 
 **Kickstart sequence (minimum to test a multi-agent flow):**
@@ -306,7 +306,7 @@ All control planes must enforce **Zero Trust** — never expose services to `0.0
   sudo ufw enable
   ```
 - **TLS + auth.** Put a reverse proxy (Caddy/Traefik) on Node 4 in front of UIs (Grafana, n8n, WebUI) with auth; Ollama `OLLAMA_ORIGINS` should be restricted to specific dev-node hosts, not `*`.
-- **Principle of least privilege.** Foundry/Ollama run as a dedicated `foundry` user, not root; NFS exports `ro`/`all_squash` for documents.
+- **Principle of least privilege.** inference-rig/Ollama run as a dedicated `inference-rig` user, not root; NFS exports `ro`/`all_squash` for documents.
 - **_(PENDING)_** Define per-node network zones and a segment firewall policy.
 
 ---
@@ -327,7 +327,7 @@ All control planes must enforce **Zero Trust** — never expose services to `0.0
 
 ## 7. Backup & Resilience
 
-- **Vector data + documents** on the ZFS pool: rely on ZFS snapshots; additionally schedule a nightly `zfs snapshot` of `tank/foundry/*`.
+- **Vector data + documents** on the ZFS pool: rely on ZFS snapshots; additionally schedule a nightly `zfs snapshot` of `tank/inference-rig/*`.
 - **Model cache** on R740xd: models are reproducible (re-pull from registry) — no need to back up, but snapshot the GGUF store if retrieval is slow.
 - **Node 4 configs** (n8n/Grifana): back up the Docker Compose volume (`/etc/backup`).
 - **_(PENDING)_** Define a backup schedule, retention, and an off-site copy for the TS430 pool.
@@ -336,11 +336,11 @@ All control planes must enforce **Zero Trust** — never expose services to `0.0
 
 ## 8. Open Questions (resolve before go-live)
 
-Many map to unresolved inventory fields in `../HOMELAB-INVENTORY.md`:
+Many map to unresolved inventory fields in `./HOMELAB-INVENTORY.md`:
 
 1. **Node 4 identity** — assign the M70q to the automation plane; repurpose or spare the NUC.
 2. **Networking** — link speed between R740xd and `DESKTOP-STEEVE` (GigE vs 10 GbE); fix the P40 serving endpoint on LAN IPs; confirm IPs are outside the DHCP pool.
-3. **Storage layout** — TS430 ZFS pool is unallocated; define NFS/SMB shares and the mount plan for `tank/foundry/{documents,vector_data}`.
+3. **Storage layout** — TS430 ZFS pool is unallocated; define NFS/SMB shares and the mount plan for `tank/inference-rig/{documents,vector_data}`.
 4. **Observability** — Prometheus/Grafana scrape targets; expose P40 telemetry via ddm.
 5. **Hardware confirmation** — P40 VRAM (24 GB each per spec; the earlier ADR draft listed 16 GB — confirm driver/nvidia-smi), NVIDIA driver version, and GPU slot→device mapping.
 6. **Security** — per-node network zones, TLS/reverse-proxy placement, and firewall policy for the control planes.
