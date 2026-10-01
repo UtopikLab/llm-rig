@@ -5,7 +5,7 @@ sudo apt update
 sudo apt install curl zstd -y
 
 # Install Ollama
-curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.34.0 sh
+curl -fsSL https://ollama.com/install.sh | sh
 
 # Create the systemd override directory for Ollama
 sudo mkdir -p /etc/systemd/system/ollama.service.d

@@ -7,16 +7,6 @@ Dedicated repository for the **local LLM inference stack** (Node 1) of this home
 - **Node 1 (pf-host / R740xd)** — dedicated inference rig running CUDA-accelerated local LLM inference.
 - Does **not** cover: Node 2 (DESKTOP-STEEVE), Node 3 (TS430 storage/NFS/Qdrant), Node 4 (M70q orchestration). See `foundry-rig/docs/` for the full 4-node blueprint.
 
-## Hardware
-
-| Component | Detail |
-|---|---|
-| GPUs | 2× NVIDIA Tesla P40 (compute capability **sm_61**, 24 GB HBM2 each, 48 GB total) |
-| Machine | Dell PowerEdge R740xd, Node 1 of the homelab (target IP `192.168.1.10`) |
-| OS | Ubuntu Server 26.04 LTS |
-| NVIDIA driver | 620.32.03 |
-| CUDA toolkit | 13.0.2 |
-
 ### FP16 constraint
 
 P40 performs poorly on FP16 and lacks compute for unquantized large models. **All lab models must be served as GGUF quantized** (`q8_0`, `q4_k_m`).
