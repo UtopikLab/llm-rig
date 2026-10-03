@@ -22,7 +22,7 @@ echo "========================================================"
 # and lacks the compute capacity for unquantized large models. All lab
 # models must be served as GGUF quantized weights (q8_0 / q4_k_m).
 
-# Repository root (this script lives in llm-rig/).
+# Repository root (this script lives in poc/node1-inference/scripts/).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 

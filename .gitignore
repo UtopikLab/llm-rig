@@ -1,0 +1,17 @@
+# Model weights, checkpoints, and downloaded artifacts (large downloads)
+/models/
+poc/*/models/
+*.gguf
+*.safetensors
+
+# Python virtual environments
+.venv/
+venv/
+*.egg-info/
+
+# Build output
+build/
+llama.cpp/build/
+
+# Local model conversion env
+.hf-env/
