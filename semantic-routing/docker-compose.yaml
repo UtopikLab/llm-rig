@@ -1,0 +1,76 @@
+services:
+  # --- GPU 0: ROUTER AGENT (Qwen 2.5 3B) ---
+  vllm-router:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-router
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    ipc: host  # Required for PyTorch shared memory allocations
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+    command: >
+      vllm serve Qwen/Qwen2.5-3B-Instruct
+      --port 8000
+      --gpu-memory-utilization 0.20
+      --kv-cache-dtype fp16
+      --max-model-len 16384
+
+  # --- GPU 0: WORKER AGENT (Llama 3.1 8B GPTQ) ---
+  vllm-worker:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-worker
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+    depends_on:
+      - vllm-router # Starts sequentially to prevent initial VRAM calculation lockups
+    command: >
+      vllm serve neuralmagic/Llama-3-8B-Instruct-GPTQ
+      --port 8001
+      --gpu-memory-utilization 0.65
+      --kv-cache-dtype fp16
+      --max-model-len 32768
+
+  # --- GPU 1: MANAGER AGENT (Qwen 2.5 14B or 32B GPTQ) ---
+  vllm-manager:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-manager
+    environment:
+      - CUDA_VISIBLE_DEVICES=1 # Completely isolates model weights to the second card
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+    command: >
+      vllm serve Qwen/Qwen2.5-14B-Instruct-GPTQ
+      --port 8002
+      --gpu-memory-utilization 0.90
+      --kv-cache-dtype fp16
+      --max-model-len 32768
+
+  # --- API GATEWAY: LiteLLM Router ---
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm-gateway
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml
+    depends_on:
+      - vllm-router
+      - vllm-worker
+      - vllm-manager
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
