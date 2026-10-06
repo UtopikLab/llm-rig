@@ -98,7 +98,7 @@ install_essential_tools() {
     apt-get install -y htop -qq
     
     # Install net-tools
-    apt-get install -y net-tools -qq
+    apt-get install -y net-tools iotop -qq
     
     # Install tmux
     # apt-get install -y tmux -qq
