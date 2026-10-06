@@ -1,65 +1,94 @@
 services:
-  # --- GPU 0: ROUTER AGENT (Qwen 2.5 3B) ---
+  # --- GPU 0: ROUTER AGENT ---
   vllm-router:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.31.0-cu129  # Modern engine, backward-compatible CUDA
     container_name: vllm-router
+    ports:
+      - "8000:8000"
     environment:
       - CUDA_VISIBLE_DEVICES=0
+      - HF_TOKEN=${HF_TOKEN}
+      - TRITON_ALWAYS_COMPILE=1
+      - VLLM_ENABLE_CUDA_COMPATIBILITY=1
+      - VLLM_VERSION=v0  # Keeps the engine stable on older architectural pipelines
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
-    ipc: host  # Required for PyTorch shared memory allocations
+    ipc: host
     deploy:
       resources:
         reservations:
-          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
     command: >
-      vllm serve Qwen/Qwen2.5-3B-Instruct
-      --port 8000
-      --gpu-memory-utilization 0.20
-      --kv-cache-dtype fp16
-      --max-model-len 16384
+      --attention-backend xformers
+      --dtype float32
+      --gpu-memory-utilization 0.35
+      --max-model-len 2048
+      --model Qwen/Qwen2.5-3B-Instruct
+    restart: unless-stopped
 
-  # --- GPU 0: WORKER AGENT (Llama 3.1 8B GPTQ) ---
+  # --- GPU 0: WORKER AGENT ---
   vllm-worker:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.31.0-cu129
     container_name: vllm-worker
+    ports:
+      - "8001:8001"
     environment:
       - CUDA_VISIBLE_DEVICES=0
+      - HF_TOKEN=${HF_TOKEN}
+      - TRITON_ALWAYS_COMPILE=1
+      - VLLM_ENABLE_CUDA_COMPATIBILITY=1
+      - VLLM_VERSION=v0
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
     ipc: host
     deploy:
       resources:
         reservations:
-          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    command: >
+      --attention-backend xformers
+      --dtype float32
+      --gpu-memory-utilization 0.55
+      --max-model-len 2048
+      --model Qwen/Qwen2.5-7B-Instruct
+    restart: unless-stopped
     depends_on:
-      - vllm-router # Starts sequentially to prevent initial VRAM calculation lockups
-    command: >
-      vllm serve neuralmagic/Llama-3-8B-Instruct-GPTQ
-      --port 8001
-      --gpu-memory-utilization 0.65
-      --kv-cache-dtype fp16
-      --max-model-len 32768
+      - vllm-router
 
-  # --- GPU 1: MANAGER AGENT (Qwen 2.5 14B or 32B GPTQ) ---
+  # --- GPU 1: MANAGER AGENT ---
   vllm-manager:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.31.0-cu129
     container_name: vllm-manager
+    ports:
+      - "8002:8002"
     environment:
-      - CUDA_VISIBLE_DEVICES=1 # Completely isolates model weights to the second card
+      - CUDA_VISIBLE_DEVICES=0
+      - TRITON_ALWAYS_COMPILE=1
+      - VLLM_ENABLE_CUDA_COMPATIBILITY=1
+      - VLLM_VERSION=v0
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
     ipc: host
     deploy:
       resources:
         reservations:
-          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
     command: >
-      vllm serve Qwen/Qwen2.5-14B-Instruct-GPTQ
-      --port 8002
+      --attention-backend xformers
+      --dtype float32
       --gpu-memory-utilization 0.90
-      --kv-cache-dtype fp16
-      --max-model-len 32768
+      --max-model-len 2048
+      --model Qwen/Qwen2.5-14B-Instruct
+    restart: unless-stopped
 
   # --- API GATEWAY: LiteLLM Router ---
   litellm:
@@ -69,8 +98,10 @@ services:
       - "4000:4000"
     volumes:
       - ./litellm-config.yaml:/app/config.yaml
+    env_file:
+      - .env
+    restart: unless-stopped
     depends_on:
+      - vllm-manager
       - vllm-router
       - vllm-worker
-      - vllm-manager
-    command: ["--config", "/app/config.yaml", "--port", "4000"]

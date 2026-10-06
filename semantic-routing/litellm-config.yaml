@@ -1,13 +1,19 @@
 model_list:
   - model_name: router-agent
     litellm_params:
+      model: router-agent
       api_base: http://vllm-router:8000/v1
       api_key: none
+    litellm_provider: vllm
   - model_name: worker-agent
     litellm_params:
+      model: worker-agent
       api_base: http://vllm-worker:8001/v1
       api_key: none
+    litellm_provider: vllm
   - model_name: manager-agent
     litellm_params:
+      model: manager-agent
       api_base: http://vllm-manager:8002/v1
       api_key: none
+    litellm_provider: vllm
