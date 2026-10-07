@@ -1,0 +1,36 @@
+# Environment variables
+.env
+
+# Local LLM model weights, checkpoints, and cache
+models/
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.gguf
+*.h5
+*.h5e
+*.ckpt
+
+# LiteLLM / inference caches
+cache/
+*.cache
+
+# VS Code / editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db

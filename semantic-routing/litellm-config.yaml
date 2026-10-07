@@ -1,19 +1,5 @@
 model_list:
-  - model_name: router-agent
+  - model_name: Ornith-1.5-35B-A3B
     litellm_params:
-      model: router-agent
-      api_base: http://vllm-router:8000/v1
-      api_key: none
-    litellm_provider: vllm
-  - model_name: worker-agent
-    litellm_params:
-      model: worker-agent
-      api_base: http://vllm-worker:8001/v1
-      api_key: none
-    litellm_provider: vllm
-  - model_name: manager-agent
-    litellm_params:
-      model: manager-agent
-      api_base: http://vllm-manager:8002/v1
-      api_key: none
-    litellm_provider: vllm
+      model: ornith-ai/Ornith-1.5-35B-A3B-GGUF
+      api_base: http://ollama-gpu1:11434
