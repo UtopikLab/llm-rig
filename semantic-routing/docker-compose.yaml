@@ -50,10 +50,15 @@ services:
     ports:
       - "${LITELLM_BIND:-}${LITELLM_PORT:-4000}:4000"
     volumes:
-      - ./litellm-config.yaml:/app/config.yaml
+      - ./litellm-config.yaml:/app/config.yaml:ro
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
+    environment:
+      # Force LiteLLM to use the mounted config file
+      - LITELLM_CONFIG_FILE=/app/config.yaml
+      # Enable debug logging to see config loading
+      - LITELLM_LOG=debug
     networks:
       - llm-network
     restart: unless-stopped
