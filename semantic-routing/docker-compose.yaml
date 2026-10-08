@@ -1,46 +1,4 @@
 services:
-  # --- GPU 0 Instance ---
-  ollama-gpu0:
-    image: ollama/ollama:latest
-    container_name: ollama-gpu0
-    environment:
-      - OLLAMA_MAX_LOADED_MODELS=2
-      - OLLAMA_NUM_PARALLEL=2
-    volumes:
-      - ~/.cache:/root/.ollama
-    networks:
-      - llm-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: [ '0' ]
-              capabilities: [ gpu ]
-
-  # --- GPU 1 Instance ---
-  ollama-gpu1:
-    image: ollama/ollama:latest
-    container_name: ollama-gpu1
-    environment:
-      - OLLAMA_MAX_LOADED_MODELS=1
-      - OLLAMA_NUM_PARALLEL=2
-      - OLLAMA_KEEP_ALIVE=-1
-    volumes:
-      - ./models:/root/.ollama
-    networks:
-      - llm-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: [ '1' ]
-              capabilities: [ gpu ]
-
-  # --- LiteLLM Gateway Router ---
   litellm:
     image: litellm/litellm:main-stable
     container_name: litellm-gateway
@@ -48,28 +6,28 @@ services:
       - "${LITELLM_BIND:-}${LITELLM_PORT:-4000}:4000"
     volumes:
       - /etc/localtime:/etc/localtime:ro
+    environment:
+      - DATABASE_URL=postgresql://litellm:${POSTGRES_PASSWORD:-litellm}@db:5432/litellm
     env_file:
       - .env
     networks:
       - llm-network
     restart: unless-stopped
     depends_on:
-      - ollama-gpu0
-      - ollama-gpu1
       - db
 
   db:
     image: postgres:16
     environment:
-      POSTGRES_USER: litellm
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-litellm}
       POSTGRES_DB: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-litellm}
+      POSTGRES_USER: litellm
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - llm-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      test: [ "CMD-SHELL", "pg_isready -U litellm" ]
       interval: 5s
       timeout: 5s
       retries: 10
