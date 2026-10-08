@@ -3,8 +3,6 @@ services:
   ollama-gpu0:
     image: ollama/ollama:latest
     container_name: ollama-gpu0
-    # ports:
-    #   - "11434:11434"
     environment:
       - OLLAMA_MAX_LOADED_MODELS=2
       - OLLAMA_NUM_PARALLEL=2
@@ -25,11 +23,10 @@ services:
   ollama-gpu1:
     image: ollama/ollama:latest
     container_name: ollama-gpu1
-    # ports:
-    #   - "11435:11434" # Binds internal 11434 to external 11435
     environment:
       - OLLAMA_MAX_LOADED_MODELS=1
       - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_KEEP_ALIVE=-1
     volumes:
       - ./models:/root/.ollama
     networks:
@@ -50,21 +47,32 @@ services:
     ports:
       - "${LITELLM_BIND:-}${LITELLM_PORT:-4000}:4000"
     volumes:
-      - ./litellm-config.yaml:/app/config.yaml:ro
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
-    environment:
-      # Force LiteLLM to use the mounted config file
-      - LITELLM_CONFIG_FILE=/app/config.yaml
-      # Enable debug logging to see config loading
-      - LITELLM_LOG=debug
     networks:
       - llm-network
     restart: unless-stopped
     depends_on:
       - ollama-gpu0
       - ollama-gpu1
+      - db
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-litellm}
+      POSTGRES_DB: litellm
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - llm-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 networks:
   llm-network:
