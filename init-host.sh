@@ -142,6 +142,8 @@ setup_timezone() {
 # Function to enable automatic updates
 setup_automatic_updates() {
     log_info "Configuring automatic updates..."
+
+    apt-get install -y cron -qq
     
     # Create unattended-upgrades directory
     mkdir -p /var/lib/apt/lists
@@ -152,7 +154,7 @@ setup_automatic_updates() {
     echo "APT::Periodic::AutocleanInterval "7";" >> /etc/apt/apt.conf.d/50unattended-upgrades
     
     # Create daily cron job for updates
-    echo "0 3 * * * root apt-get update && apt-get upgrade -y" | crontab /dev/null
+    echo "0 3 * * * root apt-get update && apt-get upgrade -y" | sudo tee -a /etc/crontab
     
     log_info "Automatic updates configured!"
 }
