@@ -92,7 +92,7 @@ install_essential_tools() {
     apt-get install -y unzip -qq
     
     # Install vim
-    # apt-get install -y vim -qq
+    apt-get install -y vim -qq
     
     # Install htop
     apt-get install -y htop -qq
@@ -101,7 +101,7 @@ install_essential_tools() {
     apt-get install -y net-tools iotop -qq
     
     # Install tmux
-    # apt-get install -y tmux -qq
+    apt-get install -y tmux -qq
     
     # Install python3 and pip
     apt-get install -y python3 python3-pip python3-venv -qq

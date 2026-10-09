@@ -55,8 +55,3 @@ shared `docs/` directory (see [`.copilot-instructions.md`](.copilot-instructions
 Each POC lives at the repo root as its own folder, with its own README.
 Keep scripts grouped by component.
 New POCs follow the pattern above and are added to the POC inventory.
-
-## Related
-
-- Full 4-node blueprint: `foundry-rig/docs/`
-- Homelab inventory: `infra-lab/HOMELAB-INVENTORY.md`

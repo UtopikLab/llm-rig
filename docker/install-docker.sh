@@ -67,3 +67,14 @@ echo "========================================================"
 echo " Docker Installation Complete!"
 echo " After re-login, run: docker run hello-world"
 echo "========================================================"
+# Prompt the user to confirm before rebooting
+read -r -p "System setup is complete. Do you want to reboot now? (yes/no) " response
+case "$response" in
+    yes|y|Y|YES)
+        echo "Rebooting system..."
+        sudo reboot
+        ;;
+    *)
+        echo "Reboot skipped. Please reboot manually using: sudo reboot"
+        ;;
+esac

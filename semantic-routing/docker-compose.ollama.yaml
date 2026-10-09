@@ -4,12 +4,13 @@ services:
     image: ollama/ollama:latest
     container_name: ollama-gpu0
     environment:
+      - OLLAMA_CONTEXT_LENGTH=262144
       - OLLAMA_MAX_LOADED_MODELS=0
-      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_NUM_PARALLEL=0
     env_file:
       - .env
     volumes:
-      - ~/.cache:/root/.ollama
+      - models:/root/.ollama
     networks:
       - llm-network
     restart: unless-stopped
@@ -18,32 +19,34 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: [ '0' ]
+              device_ids: [all]
               capabilities: [ gpu ]
 
   # --- GPU 1 Instance ---
-  ollama-gpu1:
-    image: ollama/ollama:latest
-    container_name: ollama-gpu1
-    environment:
-      - OLLAMA_CONTEXT_LENGTH=262144
-      - OLLAMA_KEEP_ALIVE=-1
-      - OLLAMA_MAX_LOADED_MODELS=1
-      - OLLAMA_NUM_PARALLEL=2
-    env_file:
-      - .env
-    volumes:
-      - ./models:/root/.ollama
-    networks:
-      - llm-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: [ '1' ]
-              capabilities: [ gpu ]
+  # ollama-gpu1:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama-gpu1
+  #   environment:
+  #     - OLLAMA_CONTEXT_LENGTH=262144
+  #     - OLLAMA_MAX_LOADED_MODELS=1
+  #     - OLLAMA_NUM_PARALLEL=0
+  #   env_file:
+  #     - .env
+  #   volumes:
+  #     - models:/root/.ollama
+  #   networks:
+  #     - llm-network
+  #   restart: unless-stopped
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             device_ids: [ '1' ]
+  #             capabilities: [ gpu ]
+
+volumes:
+  models:
 
 networks:
   llm-network:
