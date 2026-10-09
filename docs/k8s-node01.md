@@ -1,70 +1,296 @@
-## Step 1: In the Ubuntu Installer GUI
+# Bare-Metal Kubernetes Storage & K3s Setup Guide
 
-   1. Select the Dell BOSS drive (/dev/sda) as your main installation target.
-   2. Choose Use an entire disk and check the box to Set up this disk as an LVM group.
-   3. Leave /dev/sdb (SSD RAID5) and /dev/nvme0n1 (NVMe) completely unformatted and unselected.
-   4. Finish the installation and reboot into your new Ubuntu OS.
+This document records the complete, step-by-step setup procedure for provisioning tiered host storage and dynamic Kubernetes storage classes on a Dell bare-metal server.
 
-------------------------------
-## Step 2: Post-Installation Terminal Setup
-Once you boot into the server, the installer will have locked down your system disk (vg_system), leaving the other two arrays clean and ready. Open your terminal and run these commands to set up the rest of your layout:
-## 1. Configure the NVMe Drive (/dev/nvme0n1)
+---
+
+## 1. Hardware & Target Layout Overview
+
+| Device Node | Physical Hardware | Size / Usable | Role & Filesystem | Mount Point |
+| :--- | :--- | :--- | :--- | :--- |
+| `/dev/sdb` | Dell BOSS RAID1 | ~240 GB | Host OS, Containerd, Logs (`ext4`) | `/`, `/boot`, `/boot/efi` |
+| `/dev/sda` | 3x SSD RAID5 | ~1.9 TB | Persistent Cluster Storage (`xfs`) | `/mnt/k8s-data-ssd` |
+| `/dev/nvme0n1` | NVMe | ~1.9 TB | Kubelet & Fast Local PVs (`ext4`) | `/var/lib/kubelet`, `/mnt/k8s-local-nvme` |
+| `/dev/sdc` | Dell Dual SD | ~32 GB | *Unassigned / Disabled* | None |
+
+---
+
+## 2. Host Storage Allocation & LVM Configuration
+
+### 2.1 Maximize Root Logical Volume on Dell BOSS
+The Ubuntu automated installer initially allocates a partial volume (~100 GB). Expand it to utilize the full disk space:
+
+```bash
+# Extend the root logical volume to use 100% of remaining free space
+sudo lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
+
+# Resize filesystem online
+sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
 ```
-# Wipe any accidental partition metadata from the installer wizard
+
+### 2.2 Configure the NVMe Drive (`/dev/nvme0n1`)
+Partition the high-IOPS NVMe drive for both Kubelet internals and fast local persistent volumes:
+
+```bash
+# Clear any existing partition signatures
 sudo wipefs -a /dev/nvme0n1
-# Create the Volume Group and Logical Volumes
+
+# Initialize LVM PV and VG
 sudo pvcreate /dev/nvme0n1
 sudo vgcreate vg_nvme_local /dev/nvme0n1
 
+# Create 500GB volume for Kubelet emptyDir / ephemeral storage
 sudo lvcreate -L 500G -n lv_kubelet vg_nvme_local
-sudo lvcreate -L 1.3T -n lv_local_fast vg_nvme_local
-# Format the volumes
 sudo mkfs.ext4 -L k8s_kubelet /dev/vg_nvme_local/lv_kubelet
+
+# Create remaining space volume (~1.3TB) for fast local PVs
+sudo lvcreate -L 1.3T -n lv_local_fast vg_nvme_local
 sudo mkfs.ext4 -L k8s_local_fast /dev/vg_nvme_local/lv_local_fast
 ```
-## 2. Configure the SSD RAID5 Array (/dev/sdb)
-```
-# Wipe any accidental partition metadata
+
+### 2.3 Configure the SSD RAID5 Array (`/dev/sda`)
+Format the hardware-redundant array for general-purpose persistent volumes:
+
+```bash
+# Clear any existing signatures
 sudo wipefs -a /dev/sda
-# Create the Volume Group and Logical Volume using 100% of the remaining space
+
+# Initialize LVM PV and VG
 sudo pvcreate /dev/sda
 sudo vgcreate vg_data_ssd /dev/sda
 
+# Allocate 100% of free space to standard storage
 sudo lvcreate -l 100%FREE -n lv_storage_standard vg_data_ssd
 sudo mkfs.xfs -L k8s_ssd_pool /dev/vg_data_ssd/lv_storage_standard
 ```
-## 3. Create Mount Points and Update Filesystem Table
-```
-# Create target paths
+
+### 2.4 Mount Directories & Persist in `/etc/fstab`
+
+```bash
+# Create mount points
 sudo mkdir -p /var/lib/kubelet
 sudo mkdir -p /mnt/k8s-local-nvme
 sudo mkdir -p /mnt/k8s-data-ssd
-# Append mounts to /etc/fstab safely
-sudo tee -a /etc/fstab <<EOF
-/dev/vg_nvme_local/lv_kubelet       /var/lib/kubelet       ext4    defaults,noatime    0 2
-/dev/vg_nvme_local/lv_local_fast    /mnt/k8s-local-nvme    ext4    defaults,noatime    0 2
-/dev/vg_data_ssd/lv_storage_standard /mnt/k8s-data-ssd     xfs     defaults,noatime    0 2
+
+# Append mounts to fstab
+sudo tee -a /etc/fstab <<'EOF'
+/dev/vg_nvme_local/lv_kubelet        /var/lib/kubelet        ext4    defaults,noatime    0 2
+/dev/vg_nvme_local/lv_local_fast     /mnt/k8s-local-nvme     ext4    defaults,noatime    0 2
+/dev/vg_data_ssd/lv_storage_standard  /mnt/k8s-data-ssd       xfs     defaults,noatime    0 2
 EOF
-# Mount everything immediately
+
+# Mount all targets and verify
 sudo mount -a
+lsblk
 ```
-Verify your final layout by running lsblk. You will see vg_system handling your OS tasks on the BOSS card, while your two new volume groups map directly to Kubernetes storage destinations.
 
-* sdb (238.4G) is your Dell BOSS drive handling the host OS (/) and boot files.
-* sda (1.9T) is your 3x SSD RAID5 array, successfully mounted to /mnt/k8s-data-ssd.
-* nvme0n1 (1.9T) is your high-speed NVMe, mapped cleanly to /var/lib/kubelet and /mnt/k8s-local-nvme.
-* sdc (29.7G) is your Dell Dual SD card module, which is correctly left completely unassigned and unmounted.
+---
 
-## One Critical Optimization Before Installing Kubernetes
-Your sdb3 partition has 235.4G of space, but the Ubuntu installer only allocated 100G to your root partition (ubuntu--vg-ubuntu--lv).
-Because /var/lib/containerd (where Docker/Containerd stores all downloaded container images and logs) lives on your root volume, you should expand this logical volume right now to use the remaining 135.4G of free space on your BOSS card.
-Run these two commands to maximize your root partition space:
+## 3. Kubernetes (K3s) Installation
+
+Install lightweight single-node Kubernetes (K3s) with standard permissions for `kubectl`:
+
+```bash
+# Install K3s server
+curl -sfL https://k3s.io | sh -s - server --write-kubeconfig-mode 644
+
+# Export kubeconfig to shell environment
+echo 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify node is Ready
+kubectl get nodes -o wide
 ```
-# Extend the Logical Volume to use 100% of the remaining free space in the volume group
-sudo lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
-# Resize the ext4 filesystem online without rebooting
-sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv
-```
-Verify the change by running df -h /. Your root (/) directory should now reflect approximately 235G of usable space, ensuring your node won't suffer from premature disk pressure errors when downloading large image layers.
-Are you planning to run a single-node cluster (such as K3s or MicroK8s) on this machine, or is this the first node of a multi-node bare-metal cluster? Your answer will determine which Storage Class provisioner we configure next.
 
+---
+
+## 4. StorageClass Provisioner Configuration
+
+Configure the built-in Rancher Local Path Provisioner to map and recognize both host paths.
+
+### 4.1 Update Provisioner ConfigMap
+Apply the path mappings to `local-path-config`:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-path-config
+  namespace: kube-system
+data:
+  config.json: |-
+    {
+      "nodePathMap": [
+        {
+          "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+          "paths": [
+            "/mnt/k8s-data-ssd",
+            "/mnt/k8s-local-nvme"
+          ]
+        }
+      ]
+    }
+  helperPod.yaml: |-
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: helper-pod
+    spec:
+      priorityClassName: system-node-critical
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+      containers:
+      - name: helper-pod
+        image: rancher/mirrored-library-busybox:1.36.1
+        imagePullPolicy: IfNotPresent
+EOF
+```
+
+Restart the provisioner pod to reload settings:
+
+```bash
+kubectl rollout restart deployment local-path-provisioner -n kube-system
+```
+
+### 4.2 Remove Default Annotation from Built-in Class
+
+```bash
+kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+```
+
+### 4.3 Create Hardware-Pinned StorageClasses
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: k8s-sc-ssd-replicated
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+parameters:
+  nodePath: /mnt/k8s-data-ssd
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: k8s-sc-nvme-fast
+provisioner: rancher.io/local-path
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+parameters:
+  nodePath: /mnt/k8s-local-nvme
+EOF
+```
+
+Verify the storage class list:
+
+```bash
+kubectl get sc
+```
+
+Expected output:
+```text
+NAME                              PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+k8s-sc-nvme-fast                  rancher.io/local-path   Delete          WaitForFirstConsumer   false                  ...
+k8s-sc-ssd-replicated (default)   rancher.io/local-path   Retain          WaitForFirstConsumer   false                  ...
+local-path                        rancher.io/local-path   Delete          WaitForFirstConsumer   false                  ...
+```
+
+---
+
+## 5. Storage Verification & Test Workload
+
+### 5.1 Deploy Test PVCs and Verification Pod
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc-ssd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: k8s-sc-ssd-replicated
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc-nvme
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: k8s-sc-nvme-fast
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: storage-verifier
+spec:
+  containers:
+    - name: writer
+      image: busybox:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - >
+          echo "Verified: SSD RAID5 persistent storage" > /mnt/ssd/raid5-test.txt &&
+          echo "Verified: NVMe fast persistent storage" > /mnt/nvme/nvme-test.txt &&
+          sleep 3600
+      volumeMounts:
+        - name: vol-ssd
+          mountPath: /mnt/ssd
+        - name: vol-nvme
+          mountPath: /mnt/nvme
+  volumes:
+    - name: vol-ssd
+      persistentVolumeClaim:
+        claimName: test-pvc-ssd
+    - name: vol-nvme
+      persistentVolumeClaim:
+        claimName: test-pvc-nvme
+EOF
+```
+
+### 5.2 Validate Volume Host Paths
+
+Confirm mapping from Kubernetes:
+
+```bash
+kubectl get pv -o custom-columns=NAME:.metadata.name,CLAIM:.spec.claimRef.name,PATH:.spec.hostPath.path
+```
+
+Verify files from inside the container:
+
+```bash
+kubectl exec storage-verifier -- cat /mnt/ssd/raid5-test.txt
+kubectl exec storage-verifier -- cat /mnt/nvme/nvme-test.txt
+```
+
+Verify files directly on the host system:
+
+```bash
+sudo find /mnt/k8s-data-ssd /mnt/k8s-local-nvme -name "*.txt" -exec head -v -n 10 {} +
+```
+
+### 5.3 Cleanup Verification Resources
+
+```bash
+# Delete test workloads
+kubectl delete pod storage-verifier
+kubectl delete pvc test-pvc-ssd test-pvc-nvme
+
+# Remove retained test directories from SSD array
+sudo rm -rf /mnt/k8s-data-ssd/pvc-*
+```
