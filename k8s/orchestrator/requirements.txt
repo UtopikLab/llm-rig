@@ -1,0 +1,18 @@
+# ---------------------------------------------------------------------------
+# LangGraph orchestrator runtime — pinned dependencies (Open Question O8).
+#
+# This manifest ships inside the supervisor image (the "IMAGE" that fills the
+# ${IMAGE} placeholder in supervisor.yaml / agent-job-template.yaml). It is a
+# CPU-only runtime image: it carries the LangGraph state-machine runtime but
+# NOT the heavy model stacks (torch, transformers, langchain-openai). The
+# judge brain lives on a separate llama.cpp server on a GPU pod and is reached
+# over the network — see supervisor.yaml (JUDGE_HOST / JUDGE_URL).
+# ---------------------------------------------------------------------------
+langgraph>=1.2,<2.0
+langgraph-sdk>=0.4,<0.5
+langchain-core>=0.3,<0.4
+fastapi>=0.115,<0.120
+uvicorn>=0.30,<0.33
+tenacity>=8.5,<9.0
+pydantic>=2.7,<2.10
+httpx>=0.27,<0.29
